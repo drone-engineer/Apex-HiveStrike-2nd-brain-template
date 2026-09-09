@@ -1,0 +1,17 @@
+# 파이썬 캐시 및 가상환경
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# 드론 바이너리 로그 (로컬 테스트 전용)
+*.ulg
+*.bin
+
+# macOS 시스템 파일
+.DS_Store
+
+# 웹 프론트엔드 빌드/의존성 파일 (향후 대비)
+node_modules/
+.next/
