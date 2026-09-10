@@ -1,0 +1,51 @@
+{
+  "collapse-filter": false,
+  "search": "path:knowledge",
+  "showTags": false,
+  "showAttachments": false,
+  "hideUnresolved": false,
+  "showOrphans": true,
+  "collapse-color-groups": false,
+  "colorGroups": [
+    {
+      "query": "path:02_Canonical  ",
+      "color": {
+        "a": 1,
+        "rgb": 2222127
+      }
+    },
+    {
+      "query": "path:03_Discovery",
+      "color": {
+        "a": 1,
+        "rgb": 15463777
+      }
+    },
+    {
+      "query": "path:01_Evidence",
+      "color": {
+        "a": 1,
+        "rgb": 5475065
+      }
+    },
+    {
+      "query": "path:00_Meta",
+      "color": {
+        "a": 1,
+        "rgb": 16077137
+      }
+    }
+  ],
+  "collapse-display": true,
+  "showArrow": false,
+  "textFadeMultiplier": 0,
+  "nodeSizeMultiplier": 1,
+  "lineSizeMultiplier": 1,
+  "collapse-forces": true,
+  "centerStrength": 0.518713248970312,
+  "repelStrength": 10,
+  "linkStrength": 1,
+  "linkDistance": 250,
+  "scale": 1.7155769108690886,
+  "close": true
+}

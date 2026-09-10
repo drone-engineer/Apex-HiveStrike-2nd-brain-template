@@ -5,12 +5,14 @@ created_at: 2026-09-10
 author: 이수용
 status: draft
 reviewed: false
-evidence_sources:
-  - knowledge/01_Evidence/04_Hardware_Avionics/SBC_Datasheets/2026-09-sbc-comparison.md
 tags: [sbc, companion_computer, jetson, rpi, vio]
 ---
 
 # 자율비행 체급별 SBC 선정 가설
+
+- 상위 인덱스: [[Index]]
+- 기반 원본 증거: [[2026-09-sbc-comparison]]
+- 승격 예정 표준: [[sbc_selection_matrix]]
 
 ## 1. 플랫폼 티어별 채택 가설
 - **티어 1 (경량/저비용 GPS 항법)**: Raspberry Pi 4/5

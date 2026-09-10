@@ -1,0 +1,22 @@
+# Project: Apex HiveStrike - Drone Engineering Knowledge & Diagnostic Platform
+
+## 1. Core Goal
+이 프로젝트는 현업 드론 엔지니어들을 위한 올인원 지능형 R&D 지식 플랫폼입니다.
+1. 전방위 지식 자동 수집 (PX4, ArduPilot, ROS2, 개발자 포럼, 디스코드, 이슈 트래커)
+2. 엔지니어링 Q&A 및 지식 검색 (Obsidian Vault: 01_Evidence -> 03_Discovery -> 02_Canonical)
+3. 드론 비행 로그(.ulg, .tlog) 자동 분석 및 이상 진단/파라미터 처방
+
+## 2. Tech Stack & Environment
+- OS: macOS (Darwin)
+- Language/Framework: Python 3.14, FastAPI, Uvicorn
+- Core Engines: OpenClaw (Worker & Background Gateway), Claude Code CLI (Pro Plan Engine)
+- Storage & Knowledge: Obsidian Vault (Markdown, YAML Frontmatter, Bi-directional Links)
+- Interfaces: OpenClaw Gateway (port 18789, native Telegram/CLI) + REST API
+- Entry point: 텔레그램/CLI는 항상 OpenClaw가 최초 수신. `telegram_bridge.py`를 상시 폴링하지 않는다.
+
+## 3. Architecture Rules
+- 지식 문서는 엄격한 3단계 상태 머신을 따릅니다:
+  - 01_Evidence: 수집된 원천 데이터 원본
+  - 03_Discovery: AI가 1차 정제 및 요약한 미검증 가설 지식
+  - 02_Canonical: 인간 검증(reviewed: true)을 거친 단일 진실 공급원(SSOT)
+- 모든 응답과 코드는 모듈화되어야 하며, 터미널 실행 가능한 실무 수준으로 작성합니다.

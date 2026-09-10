@@ -1,0 +1,52 @@
+# OpenClaw Core 허브 — Apex HiveStrike 라우팅 계약
+# 게이트웨이: 127.0.0.1:18789 (LaunchAgent, 24h)
+# 텔레그램: OpenClaw native channel (telegram_bridge.py 폴링 금지)
+
+hub:
+  gateway_port: 18789
+  bind: loopback
+  entrypoints: [telegram, cli, openclaw-agent]
+
+agents:
+  main:
+    role: orchestrator
+    model: anthropic/claude-sonnet-5
+    spawn: [drone-rnd, researcher, hermes, developer, reviewer]
+  drone-rnd:
+    role: drone_engineering
+    model: ollama/qwen3.6:27b
+    skills: [drone-rnd, hive-second-brain]
+  researcher:
+    role: read_only_investigation
+    model: ollama/gemma4:26b
+    skills: [hive-second-brain]
+  hermes:
+    role: tool_runner
+    runtime: hermes-cli
+    toolsets: [web, browser, terminal, code_execution, computer_use]
+  claude-code:
+    role: deep_reasoning
+    runtime: claude-cli
+    note: "심층 추론은 developer/reviewer 또는 claude -p. Canonical 수치는 hive-second-brain으로 조회."
+
+vault:
+  root: knowledge
+  skill: hive-second-brain
+  cli: skills/hive-second-brain/scripts/hive_vault.py
+  ssot: knowledge/02_Canonical
+
+cron:
+  hive-source-watch:
+    every: 8h
+    command: hive_vault.py watch
+    announce: false
+  hive-daily-digest:
+    cron: "0 8 * * *"
+    tz: Asia/Seoul
+    command: hive_vault.py digest
+    announce: telegram:278187608
+
+telegram:
+  native: true
+  legacy_bridge: services/agent/telegram_bridge.py
+  legacy_bridge_enabled_env: HIVE_LEGACY_TELEGRAM_BRIDGE

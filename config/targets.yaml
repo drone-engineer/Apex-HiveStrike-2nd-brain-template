@@ -1,0 +1,52 @@
+# category 는 knowledge 도메인 칸과 1:1
+# kind: github_releases | discourse
+# keep: Discovery에 남길 필드. 그 외는 Drop.
+
+targets:
+  - id: px4_releases
+    name: "PX4 Autopilot releases"
+    url: "https://github.com/PX4/PX4-Autopilot/releases"
+    kind: github_releases
+    category: 01_Flight_Controllers
+    keep: [param_delta, breaking_change, failsafe, ekf2]
+    enabled: true
+
+  - id: px4_discuss_failsafe
+    name: "PX4 Autopilot discuss"
+    url: "https://discuss.px4.io/c/px4/25"
+    kind: discourse
+    category: 01_Flight_Controllers
+    keep: [failsafe, rtl, battery, rc_loss, ekf2]
+    enabled: true
+
+  - id: ros2_aerial_discourse
+    name: "ROS Discourse Aerial Vehicles"
+    url: "https://discourse.ros.org/c/aerial-vehicles/36"
+    kind: discourse
+    category: 02_Autonomy_ROS
+    keep: [xrce_dds, offboard, qos, topic_loss]
+    enabled: true
+
+  - id: px4_discuss_mavlink
+    name: "PX4 Discuss MAVLink"
+    url: "https://discuss.px4.io/c/mavlink/23"
+    kind: discourse
+    category: 03_Communications
+    keep: [mavlink, telemetry_baud, link_loss, rssi]
+    enabled: true
+
+  - id: mavlink_tags
+    name: "MAVLink tags"
+    url: "https://github.com/mavlink/mavlink"
+    kind: github_tags
+    category: 03_Communications
+    keep: [breaking_change, message_def]
+    enabled: true
+
+  - id: px4_discuss_hardware
+    name: "PX4 Discuss Pixhawk hardware"
+    url: "https://discuss.px4.io/c/pixhawk/22"
+    kind: discourse
+    category: 04_Hardware_Avionics
+    keep: [bec, voltage_rail, sbc, fc_board]
+    enabled: true
