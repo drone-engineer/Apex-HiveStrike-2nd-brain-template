@@ -59,8 +59,8 @@ python3 {baseDir}/scripts/hive_vault.py capture \
 python3 {baseDir}/scripts/hive_vault.py promote \
   --doc-id DISC-xxx --category 01_Flight_Controllers
 
-# ULog 진단 → 03_Discovery/06_Troubleshooting
-python3 {baseDir}/scripts/hive_vault.py analyze /path/to/flight.ulg
+# ULog 종합 진단(전 토픽 스캔) → 03_Discovery/06_Troubleshooting (+ PDF)
+python3 {baseDir}/scripts/hive_vault.py analyze /path/to/flight.ulg --pdf
 
 # Canonical에서 추출된 PX4 파라미터 목록
 python3 {baseDir}/scripts/hive_vault.py canonical-params

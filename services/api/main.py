@@ -5,6 +5,8 @@ import asyncio
 import tempfile
 from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from typing import Optional
 
@@ -16,7 +18,18 @@ from services.analyzer.ulog_analyzer import ULogAnalyzer, ULogParseError
 api = FastAPI(
     title="Apex HiveStrike Drone Agent API",
     description="2nd-Brain 지식 파이프라인, 승격 백엔드, ULog 이상 진단 API",
-    version="0.4.0"
+    version="0.7.0"
+)
+
+api.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 _MAX_ULOG_BYTES = 200 * 1024 * 1024
@@ -34,7 +47,14 @@ class PromoteRequest(BaseModel):
 
 @api.get("/")
 def read_root():
-    return {"status": "online", "service": "Apex HiveStrike Core", "version": "0.4.0"}
+    return {"status": "online", "service": "Apex HiveStrike Core", "version": "0.7.0"}
+
+
+@api.get("/vault/overview")
+def vault_overview():
+    from services.knowledge.vault import vault_overview as build_overview
+
+    return build_overview()
 
 
 @api.post("/logs/analyze", response_model=AnalysisReport)
@@ -42,7 +62,7 @@ async def analyze_flight_log(
     file: UploadFile = File(..., description="PX4 ULog (.ulg) 파일"),
     save_report: bool = True,
 ) -> AnalysisReport:
-    """업로드된 .ulg를 파싱해 진동/EKF2/전압 이상을 진단하고 Canonical 처방 리포트를 반환한다."""
+    """업로드된 .ulg 전 토픽을 스캔해 종합 진단·통계·타임라인과 Canonical 처방을 반환한다."""
 
     filename = file.filename or "upload.ulg"
     suffix = Path(filename).suffix.lower() or ".ulg"
@@ -75,6 +95,44 @@ async def analyze_flight_log(
                 os.unlink(tmp_path)
             except OSError:
                 pass
+
+
+@api.post("/logs/report/pdf")
+async def render_report_pdf(report: AnalysisReport) -> Response:
+    """분석 JSON을 한글 PDF로 렌더링해 다운로드한다."""
+
+    from services.analyzer.pdf_report import PdfFontError, render_analysis_pdf
+
+    try:
+        payload = await asyncio.to_thread(render_analysis_pdf, report)
+    except PdfFontError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF를 만들지 못했습니다. ({exc})") from exc
+
+    filename = f"{report.report_id}.pdf"
+    return Response(
+        content=payload,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api.get("/logs/report/{report_id}/pdf")
+def download_saved_report_pdf(report_id: str) -> FileResponse:
+    """분석 시 Discovery에 저장된 PDF를 내려받는다."""
+
+    if "/" in report_id or "\\" in report_id or ".." in report_id:
+        raise HTTPException(status_code=400, detail="잘못된 리포트 ID입니다.")
+    repo = Path(__file__).resolve().parents[2]
+    path = repo / "knowledge" / "03_Discovery" / "06_Troubleshooting" / f"{report_id}.pdf"
+    if not path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="저장된 PDF가 없습니다. 대시보드에서 다시 내보내거나 로그를 재분석하십시오.",
+        )
+    return FileResponse(path, media_type="application/pdf", filename=f"{report_id}.pdf")
+
 
 @api.post("/knowledge/ingest")
 def ingest_knowledge(req: IngestRequest):

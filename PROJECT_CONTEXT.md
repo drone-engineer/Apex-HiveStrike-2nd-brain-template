@@ -14,9 +14,10 @@
 - [x] Claude Code CLI (`claude -p`) 연동 무비용 로컬 볼트 RAG 기술 질의응답
 - [x] 텔레그램은 OpenClaw 게이트웨이가 최초 수신. 승격은 채팅에서 `승격 <category> <doc_id>`
 - [x] Obsidian 계층 구조 (Evidence -> Discovery -> Canonical) 그래프 뷰 시각화
-- [x] ULog(`.ulg`) 이상 진단 엔진 (`services/analyzer/ulog_analyzer.py`) + hive-second-brain `analyze` → `03_Discovery/06_Troubleshooting`
+- [x] ULog(`.ulg`) 종합 진단 엔진 (전 토픽 스캔 · 예상 문제/대응 정비 · 한글 PDF)
 - [x] Vault 계약 (`knowledge/SCHEMA.md`): Evidence SHA-256, Discovery `decision`, Canonical 2+ 위키링크, Index/log 트랜잭션
 - [x] OpenClaw cron: `hive-source-watch` (8h) · `hive-daily-digest` (매일 08:00 KST)
+- [x] 웹 대시보드 `apps/web` (볼트 현황 + ULog 차트 + 대응 정비)
 
 ## 2. Upcoming Priorities (고도화 개발 목록)
 - [ ] **비행 로그 .tlog 파서 (Priority 1 잔여)**:

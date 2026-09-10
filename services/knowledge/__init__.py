@@ -6,6 +6,7 @@ from services.knowledge.vault import (
     lint_vault,
     promote_discovery,
     rebuild_index,
+    vault_overview,
     write_discovery,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "lint_vault",
     "promote_discovery",
     "rebuild_index",
+    "vault_overview",
     "write_discovery",
 ]

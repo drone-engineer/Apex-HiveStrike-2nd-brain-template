@@ -389,3 +389,38 @@ tags: [digest]
 def looks_like_garbage(text: str) -> bool:
     lowered = text.lower()
     return any(token in lowered for token in _GARBAGE)
+
+
+def vault_overview() -> dict[str, object]:
+    """대시보드 홈에 쓰는 계층별 문서 수와 검토 대기 목록."""
+
+    def _count(root: Path) -> int:
+        if not root.is_dir():
+            return 0
+        return sum(1 for path in root.rglob("*.md") if path.name not in SKIP_NAMES)
+
+    pending: list[dict[str, str]] = []
+    if DISCOVERY.is_dir():
+        for path in sorted(DISCOVERY.rglob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+            if path.name in SKIP_NAMES:
+                continue
+            meta, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
+            if _fm_get(meta, "reviewed") == "true":
+                continue
+            pending.append(
+                {
+                    "id": path.stem,
+                    "title": _fm_get(meta, "title") or path.stem,
+                    "category": path.parent.name,
+                    "decision": _fm_get(meta, "decision") or "pending",
+                }
+            )
+    lint_count = len(lint_vault())
+    return {
+        "evidence": _count(EVIDENCE),
+        "discovery": _count(DISCOVERY),
+        "canonical": _count(CANONICAL),
+        "lint_issues": lint_count,
+        "pending": pending[:20],
+        "pending_count": len(pending),
+    }

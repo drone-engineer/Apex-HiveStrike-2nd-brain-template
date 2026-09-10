@@ -33,7 +33,18 @@ OpenClaw 허브 설치(로컬 게이트웨이):
 python3 scripts/install_openclaw_hub.py
 ```
 
-텔레그램 폴링 브리지(`telegram_bridge.py`)는 쓰지 않습니다. 진입점은 OpenClaw Gateway입니다.
+## 웹 대시보드
+
+```bash
+# API
+source services/api/venv/bin/activate
+uvicorn services.api.main:api --reload --host 127.0.0.1 --port 8000
+
+# 웹 (다른 터미널)
+cd apps/web && npm install && npm run dev
+```
+
+브라우저: http://localhost:3000 — 볼트 현황 + `.ulg` 업로드 차트.
 
 ## 신뢰도
 

@@ -1,13 +1,12 @@
-"""PX4 ULog(.ulg) 이상 진단 및 Canonical 파라미터 처방 엔진.
+"""PX4 ULog(.ulg) 종합 진단 및 Canonical 파라미터 처방 엔진.
 
 PROJECT_CONTEXT Priority 1:
-  - 진동 클리핑(Vibration Clipping)
-  - EKF2 혁신 게이트 초과
-  - 전압 드롭
+  - 전 토픽 스캔(GPS/RC/CPU/PWM/드롭아웃/잔량/온도) + 진동/EKF2/전압
+  - 운동학·타임라인·시계열 통계를 포함한 종합 보고서
   - knowledge/02_Canonical 수치와 대조한 처방 리포트
 
 탐지 게이트(이상이 '발생했는지')와 처방값(무엇을 '어떻게 고칠지')의 출처를 분리한다.
-- 탐지: PX4 EKF2가 test_ratio>1.0을 게이트 실패로 정의하는 펌웨어 규칙, 로그 자체 BAT_* 임계값
+- 탐지: PX4 펌웨어 게이트, 로그 자체 BAT_* 임계값
 - 처방: 오직 02_Canonical (reviewed: true) 수치. Canonical에 없으면 수치를 발명하지 않는다.
 """
 
@@ -31,6 +30,8 @@ if str(REPO_ROOT) not in sys.path:
 from services.analyzer.schemas import (
     AnalysisReport,
     AnomalyFinding,
+    ChartSeries,
+    FlightKinematics,
     FlightSummary,
     ParamDelta,
     ParameterPrescription,
@@ -71,6 +72,15 @@ _EVENT_HINTS = (
     "rtl",
     "land",
     "kill",
+    "arm",
+    "disarm",
+    "mode",
+    "rc",
+    "comm",
+    "dlost",
+    "takeoff",
+    "crash",
+    "preflight",
 )
 
 
@@ -209,6 +219,28 @@ def _max_severity(items: Iterable[Severity]) -> Severity:
     return max(ranked, key=_severity_rank)
 
 
+def _downsample_xy(
+    x_raw: np.ndarray, y_raw: np.ndarray, max_points: int
+) -> tuple[list[float], list[float]]:
+    x = np.asarray(x_raw, dtype=float)
+    y = np.asarray(y_raw, dtype=float)
+    n = min(x.size, y.size)
+    if n == 0:
+        return [], []
+    x = x[:n]
+    y = y[:n]
+    mask = np.isfinite(x) & np.isfinite(y)
+    x = x[mask]
+    y = y[mask]
+    if x.size == 0:
+        return [], []
+    if x.size > max_points:
+        idx = np.linspace(0, x.size - 1, max_points, dtype=int)
+        x = x[idx]
+        y = y[idx]
+    return [float(v) for v in x], [float(v) for v in y]
+
+
 def _finite(arr: np.ndarray) -> np.ndarray:
     flat = np.asarray(arr, dtype=float).reshape(-1)
     return flat[np.isfinite(flat)]
@@ -275,7 +307,7 @@ class ULogAnalyzer:
         save_report: bool = True,
     ) -> AnalysisReport:
         """
-        [동작] .ulg 파일을 파싱하고 진동/EKF2/전압 이상을 탐지한 뒤 Canonical과 대조한다.
+        [동작] .ulg 전 토픽을 스캔해 이상·통계·타임라인·종합 보고서를 만들고 Canonical과 대조한다.
         [이유] 처방 수치가 Discovery/모델 추정으로 새면 SSOT가 붕괴되므로 Canonical만 사용한다.
         [근거] AGENTS.md 지식 라이프사이클, PROJECT_CONTEXT Priority 1.
         """
@@ -298,13 +330,19 @@ class ULogAnalyzer:
                 f"파일이 손상되었거나 PX4 ULog(.ulg) 형식이 아닙니다. ({exc})"
             ) from exc
 
-        return self._analyze_parsed(ulog, filename, save_report=save_report)
+        return self._analyze_parsed(
+            ulog,
+            filename,
+            save_report=save_report,
+            file_size_bytes=path.stat().st_size,
+        )
 
     def _analyze_parsed(
         self,
         ulog: ULog,
         filename: str,
         save_report: bool,
+        file_size_bytes: int | None = None,
     ) -> AnalysisReport:
         catalog = load_canonical_catalog(self.canonical_dir)
         findings: list[AnomalyFinding] = []
@@ -315,33 +353,181 @@ class ULogAnalyzer:
         findings.extend(self._detect_voltage(ulog, notes))
         findings.extend(self._detect_failsafe_flags(ulog))
 
+        from services.analyzer import full_scan
+
+        findings.extend(full_scan.detect_gps(ulog, notes))
+        findings.extend(full_scan.detect_rc_link(ulog, notes))
+        findings.extend(full_scan.detect_cpu(ulog, notes))
+        findings.extend(full_scan.detect_actuator_sat(ulog, notes))
+        findings.extend(full_scan.detect_estimator_flags(ulog))
+        findings.extend(full_scan.detect_temperature(ulog))
+        findings.extend(full_scan.detect_battery_energy(ulog, notes))
+        findings.extend(full_scan.detect_dropouts(ulog))
+        findings.extend(full_scan.detect_logging_gaps(ulog))
+
         deltas = self._compare_canonical_params(ulog, catalog)
         prescriptions = self._build_prescriptions(ulog, catalog, findings, deltas)
-        events = self._collect_logged_events(ulog)
-        summary = self._build_summary(ulog, filename)
+        from services.analyzer.playbook import build_risks
+
+        events = self._collect_logged_events(ulog, limit=80)
+        topic_profiles = full_scan.profile_topics(ulog)
+        metric_stats = full_scan.collect_metric_stats(ulog)
+        kin = full_scan.kinematics(ulog)
+        timeline = full_scan.build_timeline(ulog, events)
+        summary = self._build_summary(
+            ulog,
+            filename,
+            kinematics=kin,
+            file_size_bytes=file_size_bytes,
+        )
+        charts = self._extract_charts(ulog) + full_scan.extra_charts(ulog)
+        risks = build_risks(findings, metric_stats, prescriptions, catalog)
 
         overall = _max_severity([f.severity for f in findings] or [Severity.OK])
         if overall == Severity.OK and any(not d.matches for d in deltas):
             overall = Severity.WARNING
+
+        executive = full_scan.build_executive_summary(
+            overall=overall,
+            findings=findings,
+            kin=kin,
+            topics=topic_profiles,
+            duration_s=summary.duration_s,
+        )
+        if risks:
+            executive.append(
+                "예상 문제: " + "; ".join(r.problem.rstrip(".") for r in risks[:4])
+            )
 
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         report_id = f"ULOG-{stamp}"
         report = AnalysisReport(
             report_id=report_id,
             overall_severity=overall,
+            executive_summary=executive,
             summary=summary,
             findings=findings,
+            risks=risks,
             prescriptions=prescriptions,
             canonical_deltas=deltas,
             logged_events=events,
+            timeline=timeline,
+            topic_profiles=topic_profiles,
+            metric_stats=metric_stats,
             canonical_docs_used=catalog.source_docs,
             notes=notes,
+            charts=charts,
         )
 
         if save_report:
             report.discovery_path = self._write_discovery_report(report, catalog)
+            try:
+                from services.analyzer.pdf_report import write_analysis_pdf
+
+                pdf_rel = self.discovery_dir / f"{report.report_id}.pdf"
+                write_analysis_pdf(report, pdf_rel)
+                report.pdf_path = str(pdf_rel.relative_to(self.repo_root))
+            except Exception as exc:  # PDF는 부가 산출물이므로 분석 자체는 성공으로 둔다.
+                notes.append(f"PDF 생성 실패: {exc}")
+                report.notes = notes
 
         return report
+
+    def _extract_charts(self, ulog: ULog, max_points: int = 400) -> list[ChartSeries]:
+        """대시보드용으로 전압·궤적·EKF 게이트를 일정 개수만 남긴다."""
+
+        charts: list[ChartSeries] = []
+        t0 = float(ulog.start_timestamp)
+
+        batt = _try_dataset(ulog, "battery_status")
+        if batt is not None:
+            ts = _series(batt.data, "timestamp")
+            volt = _series(batt.data, "voltage_v", "voltage_filtered_v")
+            if ts is not None and volt is not None:
+                x, y = _downsample_xy((ts - t0) / 1e6, volt, max_points)
+                if x:
+                    charts.append(
+                        ChartSeries(
+                            id="battery_voltage",
+                            title="배터리 전압",
+                            x_label="시간 (s)",
+                            y_label="V",
+                            kind="line",
+                            x=x,
+                            y=y,
+                        )
+                    )
+
+        local = _try_dataset(ulog, "vehicle_local_position")
+        if local is not None:
+            north = _series(local.data, "x")
+            east = _series(local.data, "y")
+            if north is not None and east is not None:
+                x, y = _downsample_xy(east, north, max_points)
+                if x:
+                    charts.append(
+                        ChartSeries(
+                            id="local_path",
+                            title="로컬 궤적 (East-North)",
+                            x_label="East (m)",
+                            y_label="North (m)",
+                            kind="path",
+                            x=x,
+                            y=y,
+                        )
+                    )
+
+        gps = _try_dataset(ulog, "vehicle_global_position") or _try_dataset(
+            ulog, "vehicle_gps_position"
+        )
+        if gps is not None:
+            lat = _series(gps.data, "lat")
+            lon = _series(gps.data, "lon")
+            if lat is not None and lon is not None:
+                lat_f = np.asarray(lat, dtype=float)
+                lon_f = np.asarray(lon, dtype=float)
+                finite = np.isfinite(lat_f) & np.isfinite(lon_f)
+                if finite.any() and float(np.nanmax(np.abs(lat_f[finite]))) > 180:
+                    lat_f = lat_f * 1e-7
+                    lon_f = lon_f * 1e-7
+                x, y = _downsample_xy(lon_f, lat_f, max_points)
+                if x:
+                    charts.append(
+                        ChartSeries(
+                            id="gps_path",
+                            title="GPS 궤적",
+                            x_label="경도",
+                            y_label="위도",
+                            kind="path",
+                            x=x,
+                            y=y,
+                        )
+                    )
+
+        est = _try_dataset(ulog, "estimator_status") or _try_dataset(
+            ulog, "estimator_status_flags"
+        )
+        if est is not None:
+            ts = _series(est.data, "timestamp")
+            ratio = _series(est.data, "hgt_test_ratio", "pos_horiz_ratio", "vel_ratio")
+            if ratio is None:
+                ratio = _indexed(est.data, "hgt_test_ratio", 0)
+            if ts is not None and ratio is not None:
+                x, y = _downsample_xy((ts - t0) / 1e6, ratio, max_points)
+                if x:
+                    charts.append(
+                        ChartSeries(
+                            id="ekf2_test_ratio",
+                            title="EKF2 test_ratio",
+                            x_label="시간 (s)",
+                            y_label="ratio",
+                            kind="line",
+                            x=x,
+                            y=y,
+                        )
+                    )
+
+        return charts
 
     @staticmethod
     def _validate_filename(filename: str) -> None:
@@ -358,9 +544,16 @@ class ULogAnalyzer:
                 status_code=400,
             )
 
-    def _build_summary(self, ulog: ULog, filename: str) -> FlightSummary:
+    def _build_summary(
+        self,
+        ulog: ULog,
+        filename: str,
+        kinematics: FlightKinematics | None = None,
+        file_size_bytes: int | None = None,
+    ) -> FlightSummary:
         duration_s = max(0.0, (ulog.last_timestamp - ulog.start_timestamp) / 1e6)
         topics = sorted({ds.name for ds in ulog.data_list})
+        drops = list(getattr(ulog, "dropouts", None) or [])
         return FlightSummary(
             filename=filename,
             duration_s=round(duration_s, 3),
@@ -369,8 +562,11 @@ class ULogAnalyzer:
             start_timestamp_us=int(ulog.start_timestamp),
             topic_count=len(topics),
             parameter_count=len(ulog.initial_parameters or {}),
-            available_topics=topics[:80],
+            available_topics=topics,
             logged_event_count=len(ulog.logged_messages or []),
+            dropout_count=len(drops),
+            file_size_bytes=file_size_bytes,
+            kinematics=kinematics,
         )
 
     def _detect_vibration(self, ulog: ULog, notes: list[str]) -> list[AnomalyFinding]:
@@ -989,18 +1185,25 @@ class ULogAnalyzer:
 
         return unique
 
-    def _collect_logged_events(self, ulog: ULog, limit: int = 20) -> list[str]:
+    def _collect_logged_events(self, ulog: ULog, limit: int = 80) -> list[str]:
         events: list[str] = []
+        rest: list[str] = []
+        t0 = float(ulog.start_timestamp)
         for msg in ulog.logged_messages or []:
             text = (msg.message or "").strip()
             if not text:
                 continue
+            ts = getattr(msg, "timestamp", None)
+            prefix = ""
+            if ts is not None:
+                prefix = f"+{(float(ts) - t0)/1e6:.1f}s "
+            line = prefix + text
             lowered = text.lower()
             if any(hint in lowered for hint in _EVENT_HINTS):
-                events.append(text)
-            if len(events) >= limit:
-                break
-        return events
+                events.append(line)
+            else:
+                rest.append(line)
+        return (events + rest)[:limit]
 
     def _write_discovery_report(
         self, report: AnalysisReport, catalog: CanonicalCatalog
@@ -1011,13 +1214,34 @@ class ULogAnalyzer:
         path = self.discovery_dir / f"{report.report_id}.md"
         wiki_names = list(dict.fromkeys(["Index", "SCHEMA", *catalog.source_docs]))
         wiki_links = " ".join(f"[[{name}]]" for name in wiki_names)
+        exec_md = "\n".join(f"- {line}" for line in report.executive_summary) or "- (요약 없음)"
         findings_md = (
             "\n".join(
-                f"- **[{f.severity.value}] {f.title}** (`{f.code}`): {f.detail}"
+                f"- **[{f.severity.value}] {f.title}** (`{f.code}`"
+                + (f", t={f.t_s:.1f}s" if f.t_s is not None else "")
+                + f"): {f.detail}"
                 for f in report.findings
             )
             or "- 탐지된 이상 없음"
         )
+        if report.risks:
+            risk_blocks: list[str] = []
+            for risk in report.risks:
+                inspect = "\n".join(f"  - {step}" for step in risk.inspect_now) or "  - (없음)"
+                canon = "\n".join(f"  - {step}" for step in risk.canonical_actions) or "  - (해당 Canonical 수치 없음)"
+                gap = f"\n- SSOT 공백: {risk.ssot_gap}" if risk.ssot_gap else ""
+                evidence = ", ".join(f"`{c}`" for c in risk.evidence_codes) or "(니어미스)"
+                risk_blocks.append(
+                    f"- **[{risk.severity.value}/{risk.likelihood}] {risk.problem}**\n"
+                    f"  - 예상 영향: {risk.impact}\n"
+                    f"  - 근거: {evidence}\n"
+                    f"  - 즉시 점검:\n{inspect}\n"
+                    f"  - Canonical 적용:\n{canon}"
+                    f"{gap}"
+                )
+            risks_md = "\n".join(risk_blocks)
+        else:
+            risks_md = "- 로그 기준 예상 문제 없음. Canonical 불일치는 아래 처방 절을 보십시오."
         rx_md = (
             "\n".join(
                 (
@@ -1039,6 +1263,44 @@ class ULogAnalyzer:
             )
             or "- Canonical에서 추출된 PX4 파라미터가 없습니다."
         )
+        kin = report.summary.kinematics
+        kin_md = "- 운동학 데이터 없음"
+        if kin:
+            kin_md = "\n".join(
+                [
+                    f"- 시동 시간: {kin.armed_s}s" if kin.armed_s is not None else "- 시동 시간: (없음)",
+                    f"- 수평 거리: {kin.distance_m} m" if kin.distance_m is not None else "- 수평 거리: (없음)",
+                    f"- 최대 수평속도: {kin.max_speed_mps} m/s" if kin.max_speed_mps is not None else "- 최대 수평속도: (없음)",
+                    f"- 최대 |vz|: {kin.max_abs_vz_mps} m/s" if kin.max_abs_vz_mps is not None else "- 최대 |vz|: (없음)",
+                    (
+                        f"- 상대고도: {kin.alt_min_m} ~ {kin.alt_max_m} m"
+                        if kin.alt_min_m is not None
+                        else "- 상대고도: (없음)"
+                    ),
+                ]
+            )
+        timeline_md = (
+            "\n".join(
+                f"- `+{e.t_s:.1f}s` [{e.kind}] {e.text}" for e in report.timeline[:80]
+            )
+            or "- 타임라인 이벤트 없음"
+        )
+        stats_md = (
+            "\n".join(
+                f"- `{m.name}` ({m.topic}): min {m.min} / mean {m.mean} / p95 {m.p95} / max {m.max}"
+                + (f" {m.unit}" if m.unit else "")
+                for m in report.metric_stats
+            )
+            or "- 추출된 시계열 통계 없음"
+        )
+        topics_md = (
+            "\n".join(
+                f"- `{p.name}[{p.instance}]` n={p.samples}"
+                + (f" @{p.rate_hz} Hz" if p.rate_hz else "")
+                for p in report.topic_profiles
+            )
+            or "- 토픽 없음"
+        )
         events_md = (
             "\n".join(f"- {e}" for e in report.logged_events) or "- 관련 로그 메시지 없음"
         )
@@ -1046,15 +1308,15 @@ class ULogAnalyzer:
 
         md = f"""---
 id: {report.report_id}
-title: ULog 비행 로그 이상 진단 리포트 ({report.summary.filename})
+title: ULog 종합 분석 보고서 ({report.summary.filename})
 status: needs_review
 reviewed: false
 category: 06_Troubleshooting
 decision: pending
-tags: [ulog, px4, diagnostics, ekf2, vibration, battery]
+tags: [ulog, px4, diagnostics, ekf2, vibration, battery, gps, comprehensive]
 ---
 
-# ULog 비행 로그 이상 진단 리포트
+# ULog 종합 분석 보고서
 
 - 상위 인덱스: [[Index]]
 - Canonical 대조 문서: {wiki_links}
@@ -1063,10 +1325,24 @@ tags: [ulog, px4, diagnostics, ekf2, vibration, battery]
 - 비행 시간: {report.summary.duration_s}s
 - 펌웨어: {report.summary.firmware or "unknown"}
 - 보드: {report.summary.board or "unknown"}
+- 토픽 수: {report.summary.topic_count} · 파라미터 {report.summary.parameter_count} · 드롭아웃 {report.summary.dropout_count}
+- 파일 크기: {f"{report.summary.file_size_bytes:,} bytes" if report.summary.file_size_bytes else "unknown"}
+
+## 종합 요약
+
+{exec_md}
+
+## 비행 규모
+
+{kin_md}
 
 ## 탐지된 이상
 
 {findings_md}
+
+## 예상 문제점 및 대응 정비
+
+{risks_md}
 
 ## Canonical 파라미터 처방
 
@@ -1075,6 +1351,18 @@ tags: [ulog, px4, diagnostics, ekf2, vibration, battery]
 ## 로그 파라미터 vs Canonical
 
 {delta_md}
+
+## 타임라인
+
+{timeline_md}
+
+## 주요 시계열 통계
+
+{stats_md}
+
+## 기록 토픽
+
+{topics_md}
 
 ## 관련 로그 메시지
 

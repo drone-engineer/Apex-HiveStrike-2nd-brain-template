@@ -158,18 +158,24 @@ def cmd_reindex() -> None:
     print(json.dumps({"status": "reindexed"}, ensure_ascii=False))
 
 
-def cmd_analyze(ulog_path: str, save_report: bool) -> None:
+def cmd_analyze(ulog_path: str, save_report: bool, pdf_out: str | None = None) -> None:
     path = Path(ulog_path).expanduser()
     if not path.is_file():
         raise SystemExit(f"로그 파일이 없습니다: {path}")
 
-    _reexec_venv_if_needed(extra=("numpy", "pydantic", "pyulog"))
+    _reexec_venv_if_needed(extra=("numpy", "pydantic", "pyulog", "fpdf"))
     _ensure_repo_on_path()
     from services.analyzer.ulog_analyzer import ULogAnalyzer
 
     report = ULogAnalyzer(repo_root=REPO_ROOT).analyze(
         path, original_filename=path.name, save_report=save_report
     )
+    if pdf_out is not None:
+        from services.analyzer.pdf_report import write_analysis_pdf
+
+        dest = Path(pdf_out).expanduser() if pdf_out else path.with_suffix(".pdf")
+        write_analysis_pdf(report, dest)
+        report.pdf_path = str(dest)
     print(json.dumps(report.model_dump(mode="json"), ensure_ascii=False, indent=2))
 
 
@@ -261,6 +267,13 @@ def main() -> None:
     p_an = sub.add_parser("analyze")
     p_an.add_argument("ulog")
     p_an.add_argument("--no-save", action="store_true")
+    p_an.add_argument(
+        "--pdf",
+        nargs="?",
+        const="",
+        default=None,
+        help="PDF 저장 경로. 값 없이 --pdf 만 주면 로그와 같은 이름의 .pdf",
+    )
 
     sub.add_parser("canonical-params")
     sub.add_parser("lint")
@@ -280,7 +293,7 @@ def main() -> None:
     elif args.cmd == "promote":
         cmd_promote(args.doc_id, args.category)
     elif args.cmd == "analyze":
-        cmd_analyze(args.ulog, save_report=not args.no_save)
+        cmd_analyze(args.ulog, save_report=not args.no_save, pdf_out=args.pdf)
     elif args.cmd == "canonical-params":
         cmd_canonical_params()
     elif args.cmd == "lint":
